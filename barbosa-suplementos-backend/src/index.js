@@ -6,12 +6,6 @@ const jwt = require('jsonwebtoken');
 const pool = require('./db');
 
 // ===================== APP =====================
-// ===================== BANCO DE DADOS =====================
-// Usa campos separados (host, porta, usuário, senha, banco) em vez de uma única
-// connection string — evita problemas de parsing quando a senha tem caracteres especiais.
-const pool = new Pool({ host: process.env.PGHOST, port: Number(process.env.PGPORT) || 6543, user: process.env.PGUSER, password: process.env.PGPASSWORD, database: process.env.PGDATABASE || 'postgres', ssl: process.env.PGHOST?.includes('localhost') ? false : { rejectUnauthorized: false } });
-
-// ===================== APP =====================
 const app = express();
 app.use(cors());
 app.use(express.json());
