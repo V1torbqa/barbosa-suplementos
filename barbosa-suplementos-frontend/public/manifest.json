@@ -1,0 +1,30 @@
+{
+  "name": "Barbosa Suplementos",
+  "short_name": "Barbosa Sup",
+  "description": "Controle de repasse e consignação de suplementos",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F7F3",
+  "theme_color": "#5EA627",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/pwasup.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwasup.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwasup.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
