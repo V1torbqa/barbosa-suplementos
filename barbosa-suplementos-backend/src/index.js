@@ -3,8 +3,9 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { Pool } = require('pg');
+const pool = require('./db');
 
+// ===================== APP =====================
 // ===================== BANCO DE DADOS =====================
 // Usa campos separados (host, porta, usuário, senha, banco) em vez de uma única
 // connection string — evita problemas de parsing quando a senha tem caracteres especiais.
