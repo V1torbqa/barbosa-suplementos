@@ -41,6 +41,21 @@ function permitirPapeis(...papeisPermitidos) {
 app.get('/', (req, res) => {
   res.json({ status: 'ok', servico: 'Barbosa Suplementos API' });
 });
+// ===================== DIAGNÓSTICO TEMPORÁRIO (remover depois) =====================
+// Mostra um "resumo" seguro das variáveis de conexão (nunca a senha em texto puro),
+// só pra comparar se local e produção estão enxergando o mesmo valor.
+app.get('/api/debug/env-check', (req, res) => {
+  const crypto = require('crypto');
+  const senha = process.env.PGPASSWORD || '';
+  res.json({
+    pghost: process.env.PGHOST || null,
+    pgport: process.env.PGPORT || null,
+    pguser: process.env.PGUSER || null,
+    pgdatabase: process.env.PGDATABASE || null,
+    pgpassword_tamanho: senha.length,
+    pgpassword_hash8: crypto.createHash('sha256').update(senha).digest('hex').slice(0, 8)
+  });
+});
 
 // ===================== AUTH =====================
 
