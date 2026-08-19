@@ -177,6 +177,7 @@ function IconeSair({ tamanho = 18 }) {
     </svg>
   );
 }
+
 function IconePerfil({ tamanho = 20 }) {
   return (
     <svg {...propsIcone(tamanho)}>
@@ -185,6 +186,27 @@ function IconePerfil({ tamanho = 20 }) {
     </svg>
   );
 }
+
+function IconeOlho({ tamanho = 18 }) {
+  return (
+    <svg {...propsIcone(tamanho)}>
+      <path d="M2 12c2.2-4.4 6-7 10-7s7.8 2.6 10 7c-2.2 4.4-6 7-10 7s-7.8-2.6-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function IconeOlhoFechado({ tamanho = 18 }) {
+  return (
+    <svg {...propsIcone(tamanho)}>
+      <path d="M3 3l18 18" />
+      <path d="M10.6 5.2A10.6 10.6 0 0 1 12 5c4 0 7.8 2.6 10 7-1 2-2.3 3.6-3.8 4.8" />
+      <path d="M6.6 6.6C4.8 7.8 3.3 9.6 2 12c2.2 4.4 6 7 10 7 1.3 0 2.5-.3 3.7-.8" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+    </svg>
+  );
+}
+
 /* ===================== COMPONENTES REUTILIZÁVEIS ===================== */
 
 function Logo({ tamanho = 25 }) {
@@ -340,6 +362,7 @@ const abasLojista = [
   { caminho: '/loja/extrato', rotulo: 'Extrato', Icone: IconeExtrato },
   { caminho: '/loja/perfil', rotulo: 'Perfil', Icone: IconePerfil }
 ];
+
 function Layout({ abas, children }) {
   const { usuario, logout } = useAuth();
   const navigate = useNavigate();
@@ -450,9 +473,11 @@ function RotaProtegida({ papeisPermitidos, children }) {
   return children;
 }
 
+/* ===================== PÁGINA: LOGIN ===================== */
 function Login() {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
+  const [mostrarSenha, setMostrarSenha] = useState(false);
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(false);
   const { login } = useAuth();
@@ -488,7 +513,25 @@ function Login() {
 
           <div className="campo">
             <label htmlFor="senha">Senha</label>
-            <input id="senha" type="password" value={senha} onChange={(e) => setSenha(e.target.value)} placeholder="••••••••" required />
+            <div className="campo-senha-wrap">
+              <input
+                id="senha"
+                type={mostrarSenha ? 'text' : 'password'}
+                value={senha}
+                onChange={(e) => setSenha(e.target.value)}
+                placeholder="••••••••"
+                required
+              />
+              <button
+                type="button"
+                className="campo-senha-olho"
+                onClick={() => setMostrarSenha((v) => !v)}
+                aria-label={mostrarSenha ? 'Esconder senha' : 'Mostrar senha'}
+                tabIndex={-1}
+              >
+                {mostrarSenha ? <IconeOlhoFechado tamanho={18} /> : <IconeOlho tamanho={18} />}
+              </button>
+            </div>
           </div>
 
           {erro && <div className="mensagem-erro">{erro}</div>}
@@ -501,6 +544,8 @@ function Login() {
     </div>
   );
 }
+
+/* ===================== PÁGINA: ESTOQUE (ADMIN) ===================== */
 function Estoque() {
   const [produtos, setProdutos] = useState([]);
   const [estoque, setEstoque] = useState([]);
@@ -626,6 +671,7 @@ function Estoque() {
     </div>
   );
 }
+
 /* ===================== PÁGINA: ENTRADA DE ESTOQUE (ADMIN) ===================== */
 function EntradaEstoque() {
   const [produtos, setProdutos] = useState([]);
@@ -647,7 +693,8 @@ function EntradaEstoque() {
   function atualizarItem(indice, campo, valor) {
     setItens((atual) => atual.map((item, i) => (i === indice ? { ...item, [campo]: valor } : item)));
   }
-    // Ao escolher o produto, já preenche o custo com o valor mais recente conhecido
+
+  // Ao escolher o produto, já preenche o custo com o valor mais recente conhecido
   // (o usuário pode ajustar se o preço dessa compra for diferente).
   function selecionarProduto(indice, produtoId) {
     const produto = produtos.find((p) => String(p.id) === String(produtoId));
@@ -656,6 +703,7 @@ function EntradaEstoque() {
       atual.map((item, i) => (i === indice ? { ...item, produto_id: produtoId, custoCentavos } : item))
     );
   }
+
   function adicionarLinha() {
     setItens((atual) => [...atual, { produto_id: '', quantidade: '', custoCentavos: 0 }]);
   }
@@ -705,7 +753,7 @@ function EntradaEstoque() {
           </label>
           {itens.map((item, indice) => (
             <div key={indice} className="linha-item-entrada">
-                            <select
+              <select
                 value={item.produto_id}
                 onChange={(e) => selecionarProduto(indice, e.target.value)}
                 required
@@ -1027,6 +1075,7 @@ function Extrato() {
     </div>
   );
 }
+
 /* ===================== PÁGINA: PERFIL ===================== */
 function Perfil() {
   const { usuario, logout } = useAuth();
@@ -1067,7 +1116,8 @@ function Perfil() {
     </div>
   );
 }
-/* ===================== REDIRECIONAMENTO INICIAL ===================== */
+
+
 function RedirecionamentoInicial() {
   const { usuario } = useAuth();
   if (!usuario) return <Navigate to="/login" replace />;
@@ -1081,9 +1131,6 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
-                        <Route path="/admin/perfil" element={
-              <RotaProtegida papeisPermitidos={['admin']}><Layout abas={abasAdmin}><Perfil /></Layout></RotaProtegida>
-            } />
             <Route path="/" element={<RedirecionamentoInicial />} />
             <Route path="/login" element={<Login />} />
 
@@ -1096,6 +1143,9 @@ export default function App() {
             <Route path="/admin/repasses" element={
               <RotaProtegida papeisPermitidos={['admin']}><Layout abas={abasAdmin}><Repasses /></Layout></RotaProtegida>
             } />
+            <Route path="/admin/perfil" element={
+              <RotaProtegida papeisPermitidos={['admin']}><Layout abas={abasAdmin}><Perfil /></Layout></RotaProtegida>
+            } />
 
             <Route path="/loja/vender" element={
               <RotaProtegida papeisPermitidos={['lojista', 'admin']}><Layout abas={abasLojista}><Vender /></Layout></RotaProtegida>
@@ -1103,7 +1153,7 @@ export default function App() {
             <Route path="/loja/extrato" element={
               <RotaProtegida papeisPermitidos={['lojista', 'admin']}><Layout abas={abasLojista}><Extrato /></Layout></RotaProtegida>
             } />
-                        <Route path="/loja/perfil" element={
+            <Route path="/loja/perfil" element={
               <RotaProtegida papeisPermitidos={['lojista', 'admin']}><Layout abas={abasLojista}><Perfil /></Layout></RotaProtegida>
             } />
 

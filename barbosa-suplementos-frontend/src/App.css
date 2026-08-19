@@ -388,6 +388,24 @@ button, input, select { font-family: inherit; }
 .cartao-login-logo { display: flex; justify-content: center; margin-bottom: 6px; }
 .cartao-login-subtitulo { text-align: center; color: var(--cor-texto-suave); font-size: 13px; margin: 0 0 28px; }
 .form-login { display: flex; flex-direction: column; gap: 16px; }
+.campo-senha-wrap { position: relative; display: flex; align-items: center; }
+.campo-senha-wrap input { width: 100%; padding-right: 44px; }
+.campo-senha-olho {
+  position: absolute;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: var(--raio-pequeno);
+  color: var(--cor-texto-suave);
+  cursor: pointer;
+  transition: color var(--rapida) ease, background var(--rapida) ease;
+}
+.campo-senha-olho:hover { color: var(--cor-texto); background: var(--cor-borda); }
 .mensagem-erro {
   background: rgba(214, 69, 69, 0.12);
   color: var(--cor-perigo);
@@ -489,7 +507,9 @@ button, input, select { font-family: inherit; }
 .card-venda { padding: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
 .card-venda-data { font-size: 13px; color: var(--cor-texto-suave); margin-top: 2px; }
 .card-venda-valores { display: flex; flex-direction: column; align-items: flex-end; font-size: 13px; gap: 2px; }
-.card-venda-repasse { color: var(--cor-aviso); font-weight: 700; }.card-perfil { padding: 20px; display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.card-venda-repasse { color: var(--cor-aviso); font-weight: 700; }
+
+.card-perfil { padding: 20px; display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
 .card-perfil-avatar {
   width: 52px;
   height: 52px;
