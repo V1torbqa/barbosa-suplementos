@@ -177,7 +177,14 @@ function IconeSair({ tamanho = 18 }) {
     </svg>
   );
 }
-
+function IconePerfil({ tamanho = 20 }) {
+  return (
+    <svg {...propsIcone(tamanho)}>
+      <circle cx="12" cy="8" r="3.6" />
+      <path d="M4.5 20c1.4-3.6 4.4-5.4 7.5-5.4s6.1 1.8 7.5 5.4" />
+    </svg>
+  );
+}
 /* ===================== COMPONENTES REUTILIZÁVEIS ===================== */
 
 function Logo({ tamanho = 25 }) {
@@ -324,14 +331,15 @@ function gerarPdfRepasse(repasse) {
 const abasAdmin = [
   { caminho: '/admin/estoque', rotulo: 'Estoque', Icone: IconeEstoque },
   { caminho: '/admin/entradas', rotulo: 'Entradas', Icone: IconeEntrada },
-  { caminho: '/admin/repasses', rotulo: 'Repasses', Icone: IconeRepasse }
+  { caminho: '/admin/repasses', rotulo: 'Repasses', Icone: IconeRepasse },
+  { caminho: '/admin/perfil', rotulo: 'Perfil', Icone: IconePerfil }
 ];
 
 const abasLojista = [
   { caminho: '/loja/vender', rotulo: 'Vender', Icone: IconeVender },
-  { caminho: '/loja/extrato', rotulo: 'Extrato', Icone: IconeExtrato }
+  { caminho: '/loja/extrato', rotulo: 'Extrato', Icone: IconeExtrato },
+  { caminho: '/loja/perfil', rotulo: 'Perfil', Icone: IconePerfil }
 ];
-
 function Layout({ abas, children }) {
   const { usuario, logout } = useAuth();
   const navigate = useNavigate();
@@ -1019,7 +1027,46 @@ function Extrato() {
     </div>
   );
 }
+/* ===================== PÁGINA: PERFIL ===================== */
+function Perfil() {
+  const { usuario, logout } = useAuth();
+  const { tema, alternarTema } = useTheme();
+  const navigate = useNavigate();
+  const nomePapel = usuario?.papel === 'admin' ? 'Administrador' : 'Lojista';
 
+  function sair() {
+    logout();
+    navigate('/login');
+  }
+
+  return (
+    <div>
+      <h1 className="pagina-titulo">Perfil</h1>
+      <p className="pagina-subtitulo-bloco">Suas informações de acesso</p>
+
+      <div className="cartao card-perfil">
+        <div className="card-perfil-avatar">{usuario?.nome?.charAt(0).toUpperCase()}</div>
+        <div>
+          <div className="card-perfil-nome">{usuario?.nome}</div>
+          <div className="card-perfil-papel">{nomePapel}</div>
+        </div>
+      </div>
+
+      <div className="cartao card-perfil-opcao">
+        <div>
+          <div className="card-perfil-opcao-titulo">Tema do aplicativo</div>
+          <div className="card-perfil-opcao-descricao">{tema === 'claro' ? 'Claro' : 'Escuro'}</div>
+        </div>
+        <AlternadorTema />
+      </div>
+
+      <button className="botao botao-secundario" style={{ width: '100%', marginTop: 20 }} onClick={sair}>
+        <IconeSair tamanho={16} />
+        Sair da conta
+      </button>
+    </div>
+  );
+}
 /* ===================== REDIRECIONAMENTO INICIAL ===================== */
 function RedirecionamentoInicial() {
   const { usuario } = useAuth();
@@ -1034,6 +1081,9 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <Routes>
+                        <Route path="/admin/perfil" element={
+              <RotaProtegida papeisPermitidos={['admin']}><Layout abas={abasAdmin}><Perfil /></Layout></RotaProtegida>
+            } />
             <Route path="/" element={<RedirecionamentoInicial />} />
             <Route path="/login" element={<Login />} />
 
@@ -1052,6 +1102,9 @@ export default function App() {
             } />
             <Route path="/loja/extrato" element={
               <RotaProtegida papeisPermitidos={['lojista', 'admin']}><Layout abas={abasLojista}><Extrato /></Layout></RotaProtegida>
+            } />
+                        <Route path="/loja/perfil" element={
+              <RotaProtegida papeisPermitidos={['lojista', 'admin']}><Layout abas={abasLojista}><Perfil /></Layout></RotaProtegida>
             } />
 
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -489,4 +489,29 @@ button, input, select { font-family: inherit; }
 .card-venda { padding: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
 .card-venda-data { font-size: 13px; color: var(--cor-texto-suave); margin-top: 2px; }
 .card-venda-valores { display: flex; flex-direction: column; align-items: flex-end; font-size: 13px; gap: 2px; }
-.card-venda-repasse { color: var(--cor-aviso); font-weight: 700; }
+.card-venda-repasse { color: var(--cor-aviso); font-weight: 700; }.card-perfil { padding: 20px; display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.card-perfil-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--cor-primaria-clara), var(--cor-primaria-escura));
+  color: #08140A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.card-perfil-nome { font-size: 16px; font-weight: 700; }
+.card-perfil-papel { font-size: 13px; color: var(--cor-texto-suave); }
+
+.card-perfil-opcao {
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.card-perfil-opcao-titulo { font-size: 14px; font-weight: 600; }
+.card-perfil-opcao-descricao { font-size: 13px; color: var(--cor-texto-suave); margin-top: 2px; }
