@@ -187,6 +187,15 @@ function IconePerfil({ tamanho = 20 }) {
   );
 }
 
+function IconeLupa({ tamanho = 18 }) {
+  return (
+    <svg {...propsIcone(tamanho)}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M20 20l-4.5-4.5" />
+    </svg>
+  );
+}
+
 function IconeOlho({ tamanho = 18 }) {
   return (
     <svg {...propsIcone(tamanho)}>
@@ -278,6 +287,46 @@ function textoParaCentavos(texto) {
 
 function centavosParaReais(centavos) {
   return (Number(centavos) || 0) / 100;
+}
+
+// Normaliza texto pra comparação (maiúsculas, sem acento, sem pontuação) — usado
+// pra tentar casar a descrição de um item do PDF com um produto já cadastrado.
+function normalizarTexto(texto) {
+  return String(texto || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function encontrarProdutoCorrespondente(produtos, descricaoNota) {
+  const alvo = normalizarTexto(descricaoNota);
+  if (!alvo) return null;
+  return produtos.find((p) => {
+    const nomeNorm = normalizarTexto(p.nome);
+    const marcaNomeNorm = normalizarTexto(`${p.marca || ''} ${p.nome}`);
+    return alvo.includes(nomeNorm) || nomeNorm.includes(alvo) || alvo.includes(marcaNomeNorm);
+  }) || null;
+}
+
+// Detecta padrões comuns de "vem em caixa/pacote" numa descrição, tentando vários
+// formatos (CX 8, CX.8, CX-8, C/12, 12UN, 12 UNID...). Se nada bater, assume 1
+// (avulso) — o campo continua editável na tela pra corrigir na mão quando precisar.
+function detectarUnidadesPorPacote(descricao) {
+  const texto = String(descricao || '');
+  const padroes = [
+    /CX\.?\s*[-\/]?\s*(\d+)/i,        // CX 8 / CX.8 / CX-8 / CX/8
+    /C\/\s*(\d+)/i,                    // C/12
+    /(\d+)\s*UN(?:ID(?:ADES)?)?\b/i,  // 12UN / 12 UNID / 12 UNIDADES
+    /CAIXA\s*(?:COM|C\/)?\s*(\d+)/i   // CAIXA COM 8 / CAIXA 8
+  ];
+  for (const padrao of padroes) {
+    const m = texto.match(padrao);
+    if (m) return Number(m[1]);
+  }
+  return 1;
 }
 
 // Campo de valor em reais que formata sozinho enquanto o usuário digita (como no Pix):
@@ -557,8 +606,15 @@ function Estoque() {
   const [marca, setMarca] = useState('');
   const [custoCentavos, setCustoCentavos] = useState(0);
   const [multiplicador, setMultiplicador] = useState('2');
+  const [unidadesPorPacote, setUnidadesPorPacote] = useState('1');
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
+
+  // Importação em lote a partir de um PDF (produto + preço, sem quantidade)
+  const [importando, setImportando] = useState(false);
+  const [erroImportacao, setErroImportacao] = useState('');
+  const [itensImportados, setItensImportados] = useState([]); // { descricao, nome, marca, multiplicador, unidadesPorPacote, custoCentavos, jaExiste, criado, salvando, erro }
+  const [buscaImportados, setBuscaImportados] = useState('');
 
   async function carregar() {
     setCarregando(true);
@@ -583,9 +639,10 @@ function Estoque() {
         nome,
         marca,
         custo_unitario: centavosParaReais(custoCentavos),
-        multiplicador_venda: Number(multiplicador)
+        multiplicador_venda: Number(multiplicador),
+        unidades_por_pacote: Number(unidadesPorPacote) || 1
       });
-      setNome(''); setMarca(''); setCustoCentavos(0); setMultiplicador('2');
+      setNome(''); setMarca(''); setCustoCentavos(0); setMultiplicador('2'); setUnidadesPorPacote('1');
       setMostrarForm(false);
       setSucesso(true);
       carregar();
@@ -595,6 +652,113 @@ function Estoque() {
       setSalvando(false);
     }
   }
+
+  async function excluirProduto(produto) {
+    const confirmado = window.confirm(`Excluir "${produto.nome}"? Ele some do estoque e do lançamento, mas o histórico de vendas continua registrado.`);
+    if (!confirmado) return;
+    try {
+      await api.delete(`/produtos/${produto.id}`);
+      carregar();
+    } catch (err) {
+      alert(err.response?.data?.erro || 'Erro ao excluir produto');
+    }
+  }
+
+  async function importarPdf(evento) {
+    const arquivo = evento.target.files?.[0];
+    evento.target.value = '';
+    if (!arquivo) return;
+
+    setImportando(true);
+    setErroImportacao('');
+    try {
+      const formData = new FormData();
+      formData.append('arquivo', arquivo);
+      const { data } = await api.post('/entradas-estoque/importar-pdf', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      // Aqui só aproveitamos DESCRIÇÃO (vira nome) e PREÇO — a quantidade dessa
+      // importação é ignorada de propósito (isso fica pra tela de Lançamento).
+      const itens = data.itens.map((itemNota) => {
+        const jaExiste = !!encontrarProdutoCorrespondente(produtos, itemNota.descricao);
+        const unidades = detectarUnidadesPorPacote(itemNota.descricao);
+        // Se veio em caixa (ex: "CX 8"), o preço da nota é da caixa inteira —
+        // convertemos pra custo por unidade individual, que é o que o sistema guarda.
+        const custoPorUnidade = itemNota.preco_unitario / unidades;
+        return {
+          descricao: itemNota.descricao,
+          nome: itemNota.descricao,
+          marca: '',
+          multiplicador: '2',
+          unidadesPorPacote: String(unidades),
+          custoCentavos: Math.round(custoPorUnidade * 100),
+          jaExiste,
+          criado: false,
+          salvando: false,
+          erro: ''
+        };
+      });
+      setItensImportados(itens);
+    } catch (err) {
+      setErroImportacao(err.response?.data?.erro || 'Erro ao importar o PDF');
+    } finally {
+      setImportando(false);
+    }
+  }
+
+  function atualizarItemImportado(indice, campo, valor) {
+    setItensImportados((atual) => atual.map((it, i) => (i === indice ? { ...it, [campo]: valor } : it)));
+  }
+
+  async function cadastrarItemImportado(indice) {
+    const item = itensImportados[indice];
+    atualizarItemImportado(indice, 'salvando', true);
+    atualizarItemImportado(indice, 'erro', '');
+    try {
+      const { data: produtoCriado } = await api.post('/produtos', {
+        nome: item.nome,
+        marca: item.marca,
+        custo_unitario: centavosParaReais(item.custoCentavos),
+        multiplicador_venda: Number(item.multiplicador),
+        unidades_por_pacote: Number(item.unidadesPorPacote) || 1
+      });
+      setProdutos((atual) => [...atual, produtoCriado]);
+      setItensImportados((atual) => atual.map((it, i) => (i === indice ? { ...it, criado: true, salvando: false } : it)));
+    } catch (err) {
+      setItensImportados((atual) =>
+        atual.map((it, i) => (i === indice ? { ...it, salvando: false, erro: err.response?.data?.erro || 'Erro ao cadastrar' } : it))
+      );
+    }
+  }
+
+  async function cadastrarTodosImportados() {
+    for (let i = 0; i < itensImportados.length; i++) {
+      if (!itensImportados[i].jaExiste && !itensImportados[i].criado) {
+        await cadastrarItemImportado(i);
+      }
+    }
+  }
+
+  // Tira um item da lista importada (ex: os que têm "CX" e você prefere cadastrar na mão).
+  function removerItemImportado(indice) {
+    setItensImportados((atual) => atual.filter((_, i) => i !== indice));
+  }
+
+  // Desiste da importação inteira e limpa a lista (os produtos já cadastrados
+  // durante o processo continuam salvos — só a lista visível é limpa).
+  function cancelarImportacao() {
+    setItensImportados([]);
+    setBuscaImportados('');
+    setErroImportacao('');
+  }
+
+  const pendentesParaCadastrar = itensImportados.filter((it) => !it.jaExiste && !it.criado).length;
+
+  const itensImportadosComIndice = itensImportados.map((item, indice) => ({ item, indice }));
+  const itensImportadosFiltrados = buscaImportados.trim()
+    ? itensImportadosComIndice.filter(({ item }) => normalizarTexto(item.descricao).includes(normalizarTexto(buscaImportados)))
+    : itensImportadosComIndice;
 
   return (
     <div>
@@ -628,13 +792,144 @@ function Estoque() {
               <label>Multiplicador de venda</label>
               <input type="number" step="0.1" min="1" value={multiplicador} onChange={(e) => setMultiplicador(e.target.value)} required />
             </div>
+            <div className="campo" style={{ flex: 1 }}>
+              <label>Unidades por caixa/pacote</label>
+              <input type="number" step="1" min="1" value={unidadesPorPacote} onChange={(e) => setUnidadesPorPacote(e.target.value)} required />
+            </div>
           </div>
+          <p className="form-previa">Deixe 1 se o produto é vendido avulso (pote, unidade). Coloque a quantidade se vem em caixa fechada (ex: caixa com 8 barras → 8).</p>
           {erro && <div className="mensagem-erro">{erro}</div>}
           <button type="submit" className="botao botao-primario" disabled={salvando}>
             {salvando ? 'Salvando...' : 'Salvar produto'}
           </button>
         </form>
       )}
+
+      <div className="cartao form-cartao">
+        <div className="importar-pdf-linha">
+          <div>
+            <div className="importar-pdf-titulo">Importar produtos de um PDF</div>
+            <div className="importar-pdf-descricao">Sobe o pedido/nota e a gente já tira o nome e o preço de cada item (sem mexer em estoque)</div>
+          </div>
+          <label className="botao botao-secundario importar-pdf-botao">
+            {importando ? 'Lendo PDF...' : 'Escolher PDF'}
+            <input type="file" accept="application/pdf" onChange={importarPdf} disabled={importando} hidden />
+          </label>
+        </div>
+        {erroImportacao && <div className="mensagem-erro" style={{ marginTop: 10 }}>{erroImportacao}</div>}
+
+        {itensImportados.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div className="importar-pdf-resumo">
+              <span>{itensImportados.length} item(ns) lido(s) do PDF — {pendentesParaCadastrar} ainda não cadastrado(s)</span>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {pendentesParaCadastrar > 0 && (
+                  <button type="button" className="botao botao-primario" onClick={cadastrarTodosImportados}>
+                    Cadastrar todos os pendentes
+                  </button>
+                )}
+                <button type="button" className="botao botao-secundario" onClick={cancelarImportacao}>
+                  Cancelar importação
+                </button>
+              </div>
+            </div>
+
+            <div className="campo-busca-importados">
+              <IconeLupa tamanho={16} />
+              <input
+                type="text"
+                placeholder='Buscar na lista (ex: "CX") pra achar e remover itens'
+                value={buscaImportados}
+                onChange={(e) => setBuscaImportados(e.target.value)}
+              />
+              {buscaImportados && (
+                <button type="button" className="limpar-busca" onClick={() => setBuscaImportados('')}>✕</button>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+              {itensImportadosFiltrados.length === 0 && (
+                <p className="pagina-subtitulo">Nenhum item bate com essa busca.</p>
+              )}
+              {itensImportadosFiltrados.map(({ item, indice }) => (
+                <div key={indice} className="cartao card-item-importado">
+                  <button
+                    type="button"
+                    className="remover-item-importado"
+                    onClick={() => removerItemImportado(indice)}
+                    title="Tirar da lista (cadastrar manualmente depois)"
+                  >
+                    ✕
+                  </button>
+                  {item.jaExiste ? (
+                    <div className="item-importado-status">
+                      <span className="pilula pilula-sucesso">Já cadastrado</span>
+                      <span>{item.descricao}</span>
+                    </div>
+                  ) : item.criado ? (
+                    <div className="item-importado-status">
+                      <span className="pilula pilula-sucesso">Cadastrado agora</span>
+                      <span>{item.nome}</span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="form-linha">
+                        <div className="campo" style={{ flex: 2 }}>
+                          <label>Nome</label>
+                          <input value={item.nome} onChange={(e) => atualizarItemImportado(indice, 'nome', e.target.value)} />
+                        </div>
+                        <div className="campo" style={{ flex: 1.2 }}>
+                          <label>Marca</label>
+                          <input value={item.marca} onChange={(e) => atualizarItemImportado(indice, 'marca', e.target.value)} placeholder="Ex: Dark Lab" />
+                        </div>
+                      </div>
+                      <div className="form-linha">
+                        <div style={{ flex: 1 }}>
+                          <CampoMoeda
+                            label="Custo unitário"
+                            valorCentavos={item.custoCentavos}
+                            aoAlterar={(v) => atualizarItemImportado(indice, 'custoCentavos', v)}
+                          />
+                        </div>
+                        <div className="campo" style={{ flex: 1 }}>
+                          <label>Multiplicador</label>
+                          <input
+                            type="number" step="0.1" min="1"
+                            value={item.multiplicador}
+                            onChange={(e) => atualizarItemImportado(indice, 'multiplicador', e.target.value)}
+                          />
+                        </div>
+                        <div className="campo" style={{ flex: 1 }}>
+                          <label>Un. por caixa</label>
+                          <input
+                            type="number" step="1" min="1"
+                            value={item.unidadesPorPacote}
+                            onChange={(e) => atualizarItemImportado(indice, 'unidadesPorPacote', e.target.value)}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                          <button
+                            type="button"
+                            className="botao botao-primario"
+                            disabled={item.salvando}
+                            onClick={() => cadastrarItemImportado(indice)}
+                          >
+                            {item.salvando ? 'Salvando...' : 'Cadastrar'}
+                          </button>
+                        </div>
+                      </div>
+                      {Number(item.unidadesPorPacote) > 1 && (
+                        <p className="form-previa">Detectado automaticamente da descrição — confira se está certo. Custo já ajustado por unidade.</p>
+                      )}
+                      {item.erro && <div className="mensagem-erro">{item.erro}</div>}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       {carregando ? (
         <p className="pagina-subtitulo">Carregando...</p>
@@ -656,12 +951,25 @@ function Estoque() {
                 <span className="card-produto-rotulo">Preço de venda</span>
                 <span>R$ {Number(produto.preco_venda).toFixed(2)}</span>
               </div>
+              {Number(produto.unidades_por_pacote) > 1 && (
+                <div className="card-produto-linha">
+                  <span className="card-produto-rotulo">Vem em caixa de</span>
+                  <span>{produto.unidades_por_pacote} un.</span>
+                </div>
+              )}
               <div className="card-produto-linha">
                 <span className="card-produto-rotulo">Em estoque</span>
                 <span className={`pilula ${estoqueDoProduto(produto.id) > 0 ? 'pilula-sucesso' : 'pilula-pendente'}`}>
                   {estoqueDoProduto(produto.id)} un.
                 </span>
               </div>
+              <button
+                type="button"
+                className="botao botao-secundario botao-excluir-card"
+                onClick={() => excluirProduto(produto)}
+              >
+                Excluir produto
+              </button>
             </div>
           ))}
         </div>
@@ -677,10 +985,22 @@ function EntradaEstoque() {
   const [produtos, setProdutos] = useState([]);
   const [entradas, setEntradas] = useState([]);
   const [numeroNota, setNumeroNota] = useState('');
-  const [itens, setItens] = useState([{ produto_id: '', quantidade: '', custoCentavos: 0 }]);
+  const [itens, setItens] = useState([{ produto_id: '', quantidade: '', custoCentavos: 0, unidadesPorPacote: 1, porCaixa: false }]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
   const [sucesso, setSucesso] = useState(false);
+  const [importando, setImportando] = useState(false);
+  const [avisoImportacao, setAvisoImportacao] = useState('');
+
+  // Cadastro rápido de produto direto na linha da entrada (quando não veio do catálogo)
+  const [indiceCriando, setIndiceCriando] = useState(null);
+  const [novoNome, setNovoNome] = useState('');
+  const [novaMarca, setNovaMarca] = useState('');
+  const [novoCustoCentavos, setNovoCustoCentavos] = useState(0);
+  const [novoMultiplicador, setNovoMultiplicador] = useState('2');
+  const [novoUnidadesPorPacote, setNovoUnidadesPorPacote] = useState('1');
+  const [salvandoNovoProduto, setSalvandoNovoProduto] = useState(false);
+  const [erroNovoProduto, setErroNovoProduto] = useState('');
 
   async function carregar() {
     const [resProdutos, resEntradas] = await Promise.all([api.get('/produtos'), api.get('/entradas-estoque')]);
@@ -695,21 +1015,133 @@ function EntradaEstoque() {
   }
 
   // Ao escolher o produto, já preenche o custo com o valor mais recente conhecido
-  // (o usuário pode ajustar se o preço dessa compra for diferente).
+  // (o usuário pode ajustar se o preço dessa compra for diferente). Se o produto vem
+  // em caixa fechada, já entra no modo "caixas" com o custo mostrado por caixa.
   function selecionarProduto(indice, produtoId) {
     const produto = produtos.find((p) => String(p.id) === String(produtoId));
-    const custoCentavos = produto ? Math.round(Number(produto.custo_unitario) * 100) : 0;
+    const unidadesPorPacote = produto ? Number(produto.unidades_por_pacote) || 1 : 1;
+    const porCaixa = unidadesPorPacote > 1;
+    const custoUnitarioCentavos = produto ? Math.round(Number(produto.custo_unitario) * 100) : 0;
+    const custoCentavos = porCaixa ? custoUnitarioCentavos * unidadesPorPacote : custoUnitarioCentavos;
     setItens((atual) =>
-      atual.map((item, i) => (i === indice ? { ...item, produto_id: produtoId, custoCentavos } : item))
+      atual.map((item, i) => (i === indice ? { ...item, produto_id: produtoId, custoCentavos, unidadesPorPacote, porCaixa } : item))
+    );
+  }
+
+  // Alterna entre lançar a quantidade em caixas ou em unidades avulsas,
+  // convertendo o custo mostrado (por caixa <-> por unidade) pra manter a coerência.
+  function alternarModoCaixa(indice) {
+    setItens((atual) =>
+      atual.map((item, i) => {
+        if (i !== indice) return item;
+        const novoPorCaixa = !item.porCaixa;
+        const custoCentavos = novoPorCaixa
+          ? item.custoCentavos * item.unidadesPorPacote
+          : Math.round(item.custoCentavos / item.unidadesPorPacote);
+        return { ...item, porCaixa: novoPorCaixa, custoCentavos };
+      })
     );
   }
 
   function adicionarLinha() {
-    setItens((atual) => [...atual, { produto_id: '', quantidade: '', custoCentavos: 0 }]);
+    setItens((atual) => [...atual, { produto_id: '', quantidade: '', custoCentavos: 0, unidadesPorPacote: 1, porCaixa: false }]);
   }
 
   function removerLinha(indice) {
     setItens((atual) => atual.filter((_, i) => i !== indice));
+  }
+
+  function abrirCadastroRapido(indice) {
+    const item = itens[indice];
+    setIndiceCriando(indice);
+    setNovoNome(item.descricaoImportada || '');
+    setNovaMarca('');
+    setNovoCustoCentavos(item.custoCentavos || 0);
+    setNovoMultiplicador('2');
+    setNovoUnidadesPorPacote(String(detectarUnidadesPorPacote(item.descricaoImportada)));
+    setErroNovoProduto('');
+  }
+
+  function fecharCadastroRapido() {
+    setIndiceCriando(null);
+    setErroNovoProduto('');
+  }
+
+  async function salvarCadastroRapido(evento) {
+    evento.preventDefault();
+    const indice = indiceCriando;
+    setErroNovoProduto('');
+    setSalvandoNovoProduto(true);
+    try {
+      const { data: produtoCriado } = await api.post('/produtos', {
+        nome: novoNome,
+        marca: novaMarca,
+        custo_unitario: centavosParaReais(novoCustoCentavos),
+        multiplicador_venda: Number(novoMultiplicador),
+        unidades_por_pacote: Number(novoUnidadesPorPacote) || 1
+      });
+      setProdutos((atual) => [...atual, produtoCriado]);
+      setItens((atual) =>
+        atual.map((it, i) => (i === indice ? {
+          ...it,
+          produto_id: String(produtoCriado.id),
+          custoCentavos: novoCustoCentavos,
+          unidadesPorPacote: Number(novoUnidadesPorPacote) || 1,
+          porCaixa: Number(novoUnidadesPorPacote) > 1
+        } : it))
+      );
+      setIndiceCriando(null);
+    } catch (err) {
+      setErroNovoProduto(err.response?.data?.erro || 'Erro ao cadastrar produto');
+    } finally {
+      setSalvandoNovoProduto(false);
+    }
+  }
+
+  async function importarPdf(evento) {
+    const arquivo = evento.target.files?.[0];
+    evento.target.value = '';
+    if (!arquivo) return;
+
+    setImportando(true);
+    setAvisoImportacao('');
+    setErro('');
+    try {
+      const formData = new FormData();
+      formData.append('arquivo', arquivo);
+      const { data } = await api.post('/entradas-estoque/importar-pdf', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      // Aqui só aproveitamos a QUANTIDADE do PDF — o custo usado é o que já está
+      // cadastrado no produto (o preço/custo em si é responsabilidade da tela Estoque).
+      // Se o produto casado vem em caixa, a quantidade da nota já é em caixas.
+      let combinados = 0;
+      const novosItens = data.itens.map((itemNota) => {
+        const produtoEncontrado = encontrarProdutoCorrespondente(produtos, itemNota.descricao);
+        if (produtoEncontrado) combinados += 1;
+        const unidadesPorPacote = produtoEncontrado ? Number(produtoEncontrado.unidades_por_pacote) || 1 : 1;
+        const porCaixa = unidadesPorPacote > 1;
+        const custoUnitarioCentavos = produtoEncontrado ? Math.round(Number(produtoEncontrado.custo_unitario) * 100) : 0;
+        return {
+          produto_id: produtoEncontrado ? String(produtoEncontrado.id) : '',
+          quantidade: String(itemNota.quantidade),
+          custoCentavos: porCaixa ? custoUnitarioCentavos * unidadesPorPacote : custoUnitarioCentavos,
+          unidadesPorPacote,
+          porCaixa,
+          descricaoImportada: itemNota.descricao
+        };
+      });
+
+      setItens(novosItens);
+      setAvisoImportacao(
+        `${data.itens.length} item(ns) importado(s) do PDF — ${combinados} já casado(s) com produtos cadastrados. Os não encontrados precisam ser cadastrados primeiro na tela Estoque.`
+      );
+    } catch (err) {
+      setErro(err.response?.data?.erro || 'Erro ao importar o PDF');
+    } finally {
+      setImportando(false);
+    }
   }
 
   async function aoEnviar(evento) {
@@ -719,14 +1151,18 @@ function EntradaEstoque() {
     try {
       await api.post('/entradas-estoque', {
         numero_nota_fiscal: numeroNota,
-        itens: itens.map((item) => ({
-          produto_id: Number(item.produto_id),
-          quantidade: Number(item.quantidade),
-          custo_unitario_registrado: centavosParaReais(item.custoCentavos)
-        }))
+        itens: itens.map((item) => {
+          const fator = item.porCaixa ? item.unidadesPorPacote : 1;
+          return {
+            produto_id: Number(item.produto_id),
+            quantidade: Number(item.quantidade) * fator,
+            custo_unitario_registrado: centavosParaReais(item.custoCentavos) / fator
+          };
+        })
       });
       setNumeroNota('');
-      setItens([{ produto_id: '', quantidade: '', custoCentavos: 0 }]);
+      setItens([{ produto_id: '', quantidade: '', custoCentavos: 0, unidadesPorPacote: 1, porCaixa: false }]);
+      setAvisoImportacao('');
       setSucesso(true);
       carregar();
     } catch (err) {
@@ -736,10 +1172,49 @@ function EntradaEstoque() {
     }
   }
 
+  async function excluirEntrada(entrada) {
+    const confirmado = window.confirm(`Excluir a entrada NF ${entrada.numero_nota_fiscal}? Isso tira essas unidades do estoque.`);
+    if (!confirmado) return;
+    try {
+      await api.delete(`/entradas-estoque/${entrada.id}`);
+      carregar();
+    } catch (err) {
+      alert(err.response?.data?.erro || 'Erro ao excluir entrada');
+    }
+  }
+
+  // Desiste da importação e volta o formulário pro estado inicial (uma linha em branco).
+  function cancelarImportacaoEntrada() {
+    setItens([{ produto_id: '', quantidade: '', custoCentavos: 0, unidadesPorPacote: 1, porCaixa: false }]);
+    setAvisoImportacao('');
+    setErro('');
+  }
+
   return (
     <div>
       <h1 className="pagina-titulo">Entrada de Estoque</h1>
       <p className="pagina-subtitulo-bloco">Lance a nota fiscal e os produtos que chegaram</p>
+
+      <div className="cartao form-cartao">
+        <div className="importar-pdf-linha">
+          <div>
+            <div className="importar-pdf-titulo">Importar de um PDF</div>
+            <div className="importar-pdf-descricao">Sobe o pedido/nota em PDF e a gente já tenta preencher os itens</div>
+          </div>
+          <label className="botao botao-secundario importar-pdf-botao">
+            {importando ? 'Lendo PDF...' : 'Escolher PDF'}
+            <input type="file" accept="application/pdf" onChange={importarPdf} disabled={importando} hidden />
+          </label>
+        </div>
+        {avisoImportacao && (
+          <div className="importar-pdf-resumo" style={{ marginTop: 10 }}>
+            <p className="form-previa" style={{ margin: 0 }}>{avisoImportacao}</p>
+            <button type="button" className="botao botao-secundario" onClick={cancelarImportacaoEntrada}>
+              Cancelar importação
+            </button>
+          </div>
+        )}
+      </div>
 
       <form onSubmit={aoEnviar} className="cartao form-cartao">
         <div className="campo">
@@ -752,34 +1227,107 @@ function EntradaEstoque() {
             Produtos da nota
           </label>
           {itens.map((item, indice) => (
-            <div key={indice} className="linha-item-entrada">
-              <select
-                value={item.produto_id}
-                onChange={(e) => selecionarProduto(indice, e.target.value)}
-                required
-                className="select-item-entrada"
-              >
-                <option value="">Selecione o produto</option>
-                {produtos.map((p) => (
-                  <option key={p.id} value={p.id}>{p.marca ? `${p.marca} — ${p.nome}` : p.nome}</option>
-                ))}
-              </select>
-              <input
-                type="number" min="1" placeholder="Qtd"
-                value={item.quantidade}
-                onChange={(e) => atualizarItem(indice, 'quantidade', e.target.value)}
-                required className="input-item-entrada"
-              />
-              <input
-                type="text" inputMode="numeric" placeholder="Custo un."
-                value={`R$ ${centavosParaTexto(item.custoCentavos)}`}
-                onChange={(e) => atualizarItem(indice, 'custoCentavos', textoParaCentavos(e.target.value))}
-                required className="input-item-entrada"
-              />
-              {itens.length > 1 && (
-                <button type="button" className="botao botao-secundario" onClick={() => removerLinha(indice)} style={{ padding: '10px 14px' }}>
-                  ✕
-                </button>
+            <div key={indice} className="bloco-item-entrada">
+              <div className="linha-item-entrada">
+                <select
+                  value={item.produto_id}
+                  onChange={(e) => selecionarProduto(indice, e.target.value)}
+                  required
+                  className="select-item-entrada"
+                >
+                  <option value="">Selecione o produto</option>
+                  {produtos.map((p) => (
+                    <option key={p.id} value={p.id}>{p.marca ? `${p.marca} — ${p.nome}` : p.nome}</option>
+                  ))}
+                </select>
+                <input
+                  type="number" min="1" placeholder={item.porCaixa ? 'Qtd caixas' : 'Qtd'}
+                  value={item.quantidade}
+                  onChange={(e) => atualizarItem(indice, 'quantidade', e.target.value)}
+                  required className="input-item-entrada"
+                />
+                <input
+                  type="text" inputMode="numeric" placeholder={item.porCaixa ? 'Custo caixa' : 'Custo un.'}
+                  value={`R$ ${centavosParaTexto(item.custoCentavos)}`}
+                  onChange={(e) => atualizarItem(indice, 'custoCentavos', textoParaCentavos(e.target.value))}
+                  required className="input-item-entrada"
+                />
+                {itens.length > 1 && (
+                  <button type="button" className="botao botao-secundario" onClick={() => removerLinha(indice)} style={{ padding: '10px 14px' }}>
+                    ✕
+                  </button>
+                )}
+              </div>
+              {item.unidadesPorPacote > 1 && (
+                <div className="alternador-caixa">
+                  Lançando em:
+                  <button
+                    type="button"
+                    className={`pilula-alternador ${item.porCaixa ? 'pilula-alternador-ativo' : ''}`}
+                    onClick={() => !item.porCaixa && alternarModoCaixa(indice)}
+                  >
+                    Caixas ({item.unidadesPorPacote} un. cada)
+                  </button>
+                  <button
+                    type="button"
+                    className={`pilula-alternador ${!item.porCaixa ? 'pilula-alternador-ativo' : ''}`}
+                    onClick={() => item.porCaixa && alternarModoCaixa(indice)}
+                  >
+                    Unidades avulsas
+                  </button>
+                </div>
+              )}
+              {!item.produto_id && (
+                <div className="aviso-nao-casado">
+                  {item.descricaoImportada ? (
+                    <>Da nota: "{item.descricaoImportada}" — não encontrado no catálogo.</>
+                  ) : (
+                    <>Nenhum produto selecionado.</>
+                  )}{' '}
+                  <button
+                    type="button"
+                    className="link-cadastrar-rapido"
+                    onClick={() => abrirCadastroRapido(indice)}
+                  >
+                    Cadastrar produto
+                  </button>
+                </div>
+              )}
+              {indiceCriando === indice && (
+                <form onSubmit={salvarCadastroRapido} className="cartao form-cadastro-rapido">
+                  <div className="form-linha">
+                    <div className="campo" style={{ flex: 2 }}>
+                      <label>Nome do produto</label>
+                      <input value={novoNome} onChange={(e) => setNovoNome(e.target.value)} required autoFocus />
+                    </div>
+                    <div className="campo" style={{ flex: 1.4 }}>
+                      <label>Marca</label>
+                      <input value={novaMarca} onChange={(e) => setNovaMarca(e.target.value)} placeholder="Ex: Dark Lab" />
+                    </div>
+                  </div>
+                  <div className="form-linha">
+                    <div style={{ flex: 1 }}>
+                      <CampoMoeda label="Custo unitário" valorCentavos={novoCustoCentavos} aoAlterar={setNovoCustoCentavos} />
+                    </div>
+                    <div className="campo" style={{ flex: 1 }}>
+                      <label>Multiplicador</label>
+                      <input type="number" step="0.1" min="1" value={novoMultiplicador} onChange={(e) => setNovoMultiplicador(e.target.value)} required />
+                    </div>
+                    <div className="campo" style={{ flex: 1 }}>
+                      <label>Un. por caixa</label>
+                      <input type="number" step="1" min="1" value={novoUnidadesPorPacote} onChange={(e) => setNovoUnidadesPorPacote(e.target.value)} required />
+                    </div>
+                  </div>
+                  {erroNovoProduto && <div className="mensagem-erro">{erroNovoProduto}</div>}
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button type="submit" className="botao botao-primario" disabled={salvandoNovoProduto}>
+                      {salvandoNovoProduto ? 'Salvando...' : 'Salvar e usar nesta linha'}
+                    </button>
+                    <button type="button" className="botao botao-secundario" onClick={fecharCadastroRapido}>
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
               )}
             </div>
           ))}
@@ -804,7 +1352,12 @@ function EntradaEstoque() {
             <div key={entrada.id} className="cartao card-entrada">
               <div className="card-entrada-cabecalho">
                 <strong>NF {entrada.numero_nota_fiscal}</strong>
-                <span className="card-entrada-data">{formatarData(entrada.data_entrada)}</span>
+                <div className="card-entrada-acoes">
+                  <span className="card-entrada-data">{formatarData(entrada.data_entrada)}</span>
+                  <button type="button" className="link-excluir" onClick={() => excluirEntrada(entrada)}>
+                    Excluir
+                  </button>
+                </div>
               </div>
               <div className="card-entrada-itens">
                 {entrada.itens.map((item, i) => {

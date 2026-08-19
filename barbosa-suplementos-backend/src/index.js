@@ -3,7 +3,12 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const { PDFParse } = require('pdf-parse');
 const pool = require('./db');
+
+// Upload de PDF fica só em memória (não salva em disco) — arquivo até 10MB
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ===================== APP =====================
 const app = express();
@@ -93,19 +98,19 @@ app.get('/api/produtos', autenticar, async (req, res) => {
 });
 
 // POST /api/produtos — cadastra um novo produto (somente admin)
-// Body: { nome, marca, custo_unitario, multiplicador_venda }
+// Body: { nome, marca, custo_unitario, multiplicador_venda, unidades_por_pacote }
 app.post('/api/produtos', autenticar, permitirPapeis('admin'), async (req, res) => {
-  const { nome, marca, custo_unitario, multiplicador_venda } = req.body;
+  const { nome, marca, custo_unitario, multiplicador_venda, unidades_por_pacote } = req.body;
   if (!nome || custo_unitario === undefined) {
     return res.status(400).json({ erro: 'Informe nome e custo_unitario' });
   }
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO produtos (nome, marca, custo_unitario, multiplicador_venda)
-       VALUES ($1, $2, $3, COALESCE($4, 2.00))
+      `INSERT INTO produtos (nome, marca, custo_unitario, multiplicador_venda, unidades_por_pacote)
+       VALUES ($1, $2, $3, COALESCE($4, 2.00), COALESCE($5, 1))
        RETURNING *`,
-      [nome, marca, custo_unitario, multiplicador_venda]
+      [nome, marca, custo_unitario, multiplicador_venda, unidades_por_pacote]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -117,7 +122,7 @@ app.post('/api/produtos', autenticar, permitirPapeis('admin'), async (req, res) 
 // PUT /api/produtos/:id — atualiza dados do produto (somente admin)
 app.put('/api/produtos/:id', autenticar, permitirPapeis('admin'), async (req, res) => {
   const { id } = req.params;
-  const { nome, marca, custo_unitario, multiplicador_venda, ativo } = req.body;
+  const { nome, marca, custo_unitario, multiplicador_venda, unidades_por_pacote, ativo } = req.body;
 
   try {
     const { rows } = await pool.query(
@@ -126,17 +131,37 @@ app.put('/api/produtos/:id', autenticar, permitirPapeis('admin'), async (req, re
          marca = COALESCE($2, marca),
          custo_unitario = COALESCE($3, custo_unitario),
          multiplicador_venda = COALESCE($4, multiplicador_venda),
-         ativo = COALESCE($5, ativo),
+         unidades_por_pacote = COALESCE($5, unidades_por_pacote),
+         ativo = COALESCE($6, ativo),
          atualizado_em = NOW()
-       WHERE id = $6
+       WHERE id = $7
        RETURNING *`,
-      [nome, marca, custo_unitario, multiplicador_venda, ativo, id]
+      [nome, marca, custo_unitario, multiplicador_venda, unidades_por_pacote, ativo, id]
     );
     if (!rows[0]) return res.status(404).json({ erro: 'Produto não encontrado' });
     res.json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: 'Erro ao atualizar produto' });
+  }
+});
+
+// DELETE /api/produtos/:id — "exclui" o produto (somente admin)
+// Na prática marca como inativo em vez de apagar de verdade do banco — assim o
+// histórico de entradas/vendas já feitas com esse produto continua íntegro.
+// O produto some das listas (Estoque, dropdown de Lançamento, Vender) imediatamente.
+app.delete('/api/produtos/:id', autenticar, permitirPapeis('admin'), async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE produtos SET ativo = FALSE, atualizado_em = NOW() WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    if (!rows[0]) return res.status(404).json({ erro: 'Produto não encontrado' });
+    res.json({ sucesso: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao excluir produto' });
   }
 });
 
@@ -154,6 +179,58 @@ app.get('/api/estoque', autenticar, async (req, res) => {
 });
 
 // ===================== ENTRADAS DE ESTOQUE =====================
+
+// POST /api/entradas-estoque/importar-pdf — lê um PDF de pedido/nota e extrai os itens
+// (código, descrição, quantidade, preço unitário) pra pré-preencher o lançamento.
+// Layout suportado: tabela com colunas CÓDIGO / DESCRIÇÃO / QTD / PREÇO UNIT. / TOTAL.
+app.post('/api/entradas-estoque/importar-pdf', autenticar, permitirPapeis('admin'), upload.single('arquivo'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ erro: 'Envie um arquivo PDF no campo "arquivo"' });
+  }
+
+  try {
+    const parser = new PDFParse({ data: req.file.buffer });
+    const resultado = await parser.getText();
+    await parser.destroy();
+
+    // Remove marcadores de página que a lib insere entre páginas (ex: "-- 1 of 6 --")
+    const texto = resultado.text.replace(/--\s*\d+\s*of\s*\d+\s*--/g, '');
+
+    // Cada registro começa com um código de 4 dígitos sozinho na linha
+    const regexRegistro = /(\d{4})\r?\n([\s\S]*?)(?=\r?\n\d{4}\r?\n|\r?\nTotal a Pagar|$)/g;
+    // Dentro do bloco: "R$ preço R$ total <tab> qtd <tab> descrição"
+    const regexCampos = /R\$\s*([\d.,]+)\s*R\$\s*([\d.,]+)\s*\t\s*(\d+)\s*(?:\(Un\.\))?\s*\t\s*([\s\S]+)/;
+
+    function paraNumero(valor) {
+      return Number(valor.replace(/\./g, '').replace(',', '.'));
+    }
+
+    const itens = [];
+    let m;
+    while ((m = regexRegistro.exec(texto)) !== null) {
+      const codigo = m[1];
+      const bloco = m[2];
+      const cm = bloco.match(regexCampos);
+      if (!cm) continue;
+      itens.push({
+        codigo,
+        descricao: cm[4].replace(/\s+/g, ' ').trim(),
+        quantidade: Number(cm[3]),
+        preco_unitario: paraNumero(cm[1]),
+        total: paraNumero(cm[2])
+      });
+    }
+
+    if (itens.length === 0) {
+      return res.status(422).json({ erro: 'Não conseguimos identificar itens nesse PDF. Lance manualmente.' });
+    }
+
+    res.json({ itens });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao ler o PDF' });
+  }
+});
 
 // POST /api/entradas-estoque — lança nota fiscal com itens (somente admin)
 app.post('/api/entradas-estoque', autenticar, permitirPapeis('admin'), async (req, res) => {
@@ -228,6 +305,22 @@ app.get('/api/entradas-estoque', autenticar, permitirPapeis('admin'), async (req
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: 'Erro ao listar entradas de estoque' });
+  }
+});
+
+// DELETE /api/entradas-estoque/:id — exclui uma entrada lançada errada (somente admin)
+// Remove a entrada e seus itens (o estoque calculado é atualizado automaticamente,
+// já que ele soma direto das entradas restantes). Não mexe no custo já atualizado
+// no produto — se precisar corrigir o custo, ajuste direto na tela Estoque.
+app.delete('/api/entradas-estoque/:id', autenticar, permitirPapeis('admin'), async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { rowCount } = await pool.query('DELETE FROM entradas_estoque WHERE id = $1', [id]);
+    if (rowCount === 0) return res.status(404).json({ erro: 'Entrada não encontrada' });
+    res.json({ sucesso: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: 'Erro ao excluir entrada' });
   }
 });
 
