@@ -281,7 +281,23 @@ button, input, select { font-family: inherit; }
 
 .area-principal { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
-.topo { display: flex; justify-content: space-between; align-items: center; padding: 20px 40px 0; }
+.topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 40px;
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background: var(--glass-fundo);
+  border-bottom: 1px solid var(--cor-borda);
+  backdrop-filter: blur(18px) saturate(1.4);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  transition: background-color var(--media) ease, border-color var(--media) ease;
+}
+@supports not ((backdrop-filter: blur(1px))) {
+  .topo { background: var(--cor-superficie); }
+}
 .topo-usuario { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .topo-usuario-nome { font-weight: 700; color: var(--cor-texto); }
 .topo-usuario-separador { color: var(--cor-texto-suave); }
@@ -299,7 +315,7 @@ button, input, select { font-family: inherit; }
 
 @media (max-width: 860px) {
   .sidebar { display: none; }
-  .topo { padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+  .topo { padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 16px max(16px, env(safe-area-inset-left)); }
   .conteudo { padding: 16px 16px calc(110px + env(safe-area-inset-bottom)); }
   .menu-inferior {
     display: flex;
@@ -367,8 +383,8 @@ button, input, select { font-family: inherit; }
   position: relative;
   background: radial-gradient(circle at 20% 20%, rgba(94,166,39,0.16), transparent 45%), var(--cor-fundo);
 }
-.pagina-login-alternador { position: absolute; top: 24px; right: 24px; }
-.cartao-login { width: 100%; max-width: 380px; padding: 36px 32px; border-radius: var(--raio-grande); }
+.cartao-login { position: relative; width: 100%; max-width: 380px; padding: 36px 32px; border-radius: var(--raio-grande); }
+.cartao-login-alternador { position: absolute; top: 18px; right: 18px; }
 .cartao-login-logo { display: flex; justify-content: center; margin-bottom: 6px; }
 .cartao-login-subtitulo { text-align: center; color: var(--cor-texto-suave); font-size: 13px; margin: 0 0 28px; }
 .form-login { display: flex; flex-direction: column; gap: 16px; }

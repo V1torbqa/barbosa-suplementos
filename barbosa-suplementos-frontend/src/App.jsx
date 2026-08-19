@@ -442,7 +442,6 @@ function RotaProtegida({ papeisPermitidos, children }) {
   return children;
 }
 
-/* ===================== PÁGINA: LOGIN ===================== */
 function Login() {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
@@ -467,9 +466,9 @@ function Login() {
 
   return (
     <div className="pagina-login">
-      <AlternadorTema className="pagina-login-alternador" />
-
       <div className="cartao superficie-vidro cartao-login">
+        <AlternadorTema className="cartao-login-alternador" />
+
         <div className="cartao-login-logo"><Logo tamanho={25} /></div>
         <p className="cartao-login-subtitulo">Controle de repasse e consignação</p>
 
@@ -494,8 +493,6 @@ function Login() {
     </div>
   );
 }
-
-/* ===================== PÁGINA: ESTOQUE (ADMIN) ===================== */
 function Estoque() {
   const [produtos, setProdutos] = useState([]);
   const [estoque, setEstoque] = useState([]);
@@ -579,11 +576,6 @@ function Estoque() {
               <input type="number" step="0.1" min="1" value={multiplicador} onChange={(e) => setMultiplicador(e.target.value)} required />
             </div>
           </div>
-          {custoCentavos > 0 && multiplicador && (
-            <p className="form-previa">
-              Preço de venda calculado: <strong>R$ {(centavosParaReais(custoCentavos) * Number(multiplicador)).toFixed(2).replace('.', ',')}</strong>
-            </p>
-          )}
           {erro && <div className="mensagem-erro">{erro}</div>}
           <button type="submit" className="botao botao-primario" disabled={salvando}>
             {salvando ? 'Salvando...' : 'Salvar produto'}
@@ -626,7 +618,6 @@ function Estoque() {
     </div>
   );
 }
-
 /* ===================== PÁGINA: ENTRADA DE ESTOQUE (ADMIN) ===================== */
 function EntradaEstoque() {
   const [produtos, setProdutos] = useState([]);
@@ -648,7 +639,15 @@ function EntradaEstoque() {
   function atualizarItem(indice, campo, valor) {
     setItens((atual) => atual.map((item, i) => (i === indice ? { ...item, [campo]: valor } : item)));
   }
-
+    // Ao escolher o produto, já preenche o custo com o valor mais recente conhecido
+  // (o usuário pode ajustar se o preço dessa compra for diferente).
+  function selecionarProduto(indice, produtoId) {
+    const produto = produtos.find((p) => String(p.id) === String(produtoId));
+    const custoCentavos = produto ? Math.round(Number(produto.custo_unitario) * 100) : 0;
+    setItens((atual) =>
+      atual.map((item, i) => (i === indice ? { ...item, produto_id: produtoId, custoCentavos } : item))
+    );
+  }
   function adicionarLinha() {
     setItens((atual) => [...atual, { produto_id: '', quantidade: '', custoCentavos: 0 }]);
   }
@@ -698,9 +697,9 @@ function EntradaEstoque() {
           </label>
           {itens.map((item, indice) => (
             <div key={indice} className="linha-item-entrada">
-              <select
+                            <select
                 value={item.produto_id}
-                onChange={(e) => atualizarItem(indice, 'produto_id', e.target.value)}
+                onChange={(e) => selecionarProduto(indice, e.target.value)}
                 required
                 className="select-item-entrada"
               >
